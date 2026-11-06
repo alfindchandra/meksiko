@@ -10,9 +10,9 @@ type ProductDraft = Omit<Product, "id">;
 const EMPTY_PRODUCT: ProductDraft = {
   name: "",
   category: "",
-  unit: "BTL",
+  unit: "Btl",
   emoji: "",
-  tiers: [{ id: "bottle", label: "1 BTL", price: 0 }],
+  tiers: [{ id: "Btl", label: "Btl", price: 0 }],
 };
 
 function normalizeSearch(value: string) {
@@ -137,7 +137,7 @@ export default function MasterData({
     if (!outletForm) return;
     const name = outletForm.name.trim();
     if (!name) {
-      onNotify("Nama ruko wajib diisi.", true);
+      onNotify("Nama cabang wajib diisi.", true);
       return;
     }
     const duplicate = outlets.some(
@@ -146,7 +146,7 @@ export default function MasterData({
         outlet.name.toLocaleLowerCase("id-ID") === name.toLocaleLowerCase("id-ID"),
     );
     if (duplicate) {
-      onNotify("Nama ruko tersebut sudah terdaftar.", true);
+      onNotify("Nama cabang tersebut sudah terdaftar.", true);
       return;
     }
 
@@ -165,7 +165,7 @@ export default function MasterData({
     try {
       if (await onSaveOutlets(next)) {
         setOutletForm(null);
-        onNotify("Data ruko berhasil disimpan ke database.");
+        onNotify("Data cabang berhasil disimpan ke database.");
       }
     } finally {
       setSaving(false);
@@ -219,13 +219,13 @@ export default function MasterData({
   }
 
   async function deleteOutlet(outlet: Outlet) {
-    if (!window.confirm(`Hapus ruko "${outlet.name}" dari data master?`)) {
+    if (!window.confirm(`Hapus cabang "${outlet.name}" dari data master?`)) {
       return;
     }
     setSaving(true);
     try {
       if (await onSaveOutlets(outlets.filter((item) => item.id !== outlet.id))) {
-        onNotify("Ruko berhasil dihapus dari database.");
+        onNotify("cabang berhasil dihapus dari database.");
       }
     } finally {
       setSaving(false);
@@ -240,7 +240,7 @@ export default function MasterData({
             <p className="eyebrow">Pengaturan toko</p>
             <h1 className="page-title">Data master</h1>
             <p className="page-description">
-              Kelola barang, tier harga, dan daftar ruko untuk transaksi POS.
+              Kelola barang, tier harga, dan daftar cabang untuk transaksi POS.
             </p>
           </div>
           <span className="master-storage-badge">
@@ -276,16 +276,16 @@ export default function MasterData({
               role="tab"
               type="button"
             >
-              Ruko <span>{outlets.length}</span>
+              cabang <span>{outlets.length}</span>
             </button>
           </div>
           <label className="master-search">
             <span aria-hidden="true">⌕</span>
             <input
-              aria-label={tab === "products" ? "Cari barang" : "Cari ruko"}
+              aria-label={tab === "products" ? "Cari barang" : "Cari cabang"}
               onChange={(event) => setSearch(event.target.value)}
               placeholder={
-                tab === "products" ? "Cari nama barang..." : "Cari nama ruko..."
+                tab === "products" ? "Cari nama barang..." : "Cari nama cabang..."
               }
               value={search}
             />
@@ -305,7 +305,7 @@ export default function MasterData({
             type="button"
           >
             <span aria-hidden="true">＋</span>
-            {tab === "products" ? "Tambah barang" : "Tambah ruko"}
+            {tab === "products" ? "Tambah barang" : "Tambah cabang"}
           </button>
         </div>
 
@@ -389,7 +389,7 @@ export default function MasterData({
                     ✎ Edit nama
                   </button>
                   <button
-                    aria-label={`Hapus ruko ${outlet.name}`}
+                    aria-label={`Hapus cabang ${outlet.name}`}
                     className="danger-button"
                     disabled={!ready || Boolean(activeLoadError) || saving}
                     onClick={() => deleteOutlet(outlet)}
@@ -403,10 +403,10 @@ export default function MasterData({
             {filteredOutlets.length === 0 && (
               <div className="panel master-empty">
                 {outletLoadError
-                  ? "Data ruko belum dapat dimuat. Lihat pesan database di atas."
+                  ? "Data cabang belum dapat dimuat. Lihat pesan database di atas."
                   : outlets.length === 0
-                    ? "Belum ada data ruko di database."
-                    : `Tidak ada ruko yang cocok dengan “${search.trim()}”.`}
+                    ? "Belum ada data cabang di database."
+                    : `Tidak ada cabang yang cocok dengan “${search.trim()}”.`}
               </div>
             )}
           </div>
@@ -476,7 +476,7 @@ export default function MasterData({
                       onChange={(event) =>
                         setProductForm({ ...productForm, unit: event.target.value })
                       }
-                      placeholder="BTL"
+                      placeholder="Btl"
                       required
                       value={productForm.unit}
                     />
@@ -486,7 +486,7 @@ export default function MasterData({
                 <div className="master-tier-heading">
                   <div>
                     <strong>Tier harga</strong>
-                    <span>Harga yang diubah langsung dipakai oleh kasir.</span>
+                    <span>Harga yang diubah langsung dipakai oleh Laku.</span>
                   </div>
                   <button
                     className="secondary-button"
@@ -587,12 +587,12 @@ export default function MasterData({
               <header className="master-modal-header">
                 <div>
                   <h2 id="outlet-form-title">
-                    {outletForm.id ? "Edit nama ruko" : "Tambah ruko"}
+                    {outletForm.id ? "Edit nama cabang" : "Tambah cabang"}
                   </h2>
-                  <p>Nama ruko ini digunakan saat mencatat setoran.</p>
+                  <p>Nama cabang ini digunakan saat mencatat setoran.</p>
                 </div>
                 <button
-                  aria-label="Tutup form ruko"
+                  aria-label="Tutup form cabang"
                   className="tier-modal-close"
                   onClick={() => setOutletForm(null)}
                   type="button"
@@ -602,13 +602,13 @@ export default function MasterData({
               </header>
               <div className="master-form-body">
                 <label className="master-field">
-                  Nama ruko
+                  Nama cabang
                   <input
                     autoFocus
                     onChange={(event) =>
                       setOutletForm({ ...outletForm, name: event.target.value })
                     }
-                    placeholder="Masukkan nama ruko"
+                    placeholder="Masukkan nama cabang"
                     required
                     value={outletForm.name}
                   />
@@ -627,7 +627,7 @@ export default function MasterData({
                   disabled={!ready || Boolean(outletLoadError) || saving}
                   type="submit"
                 >
-                  {saving ? "Menyimpan..." : "Simpan ruko"}
+                  {saving ? "Menyimpan..." : "Simpan cabang"}
                 </button>
               </footer>
             </form>

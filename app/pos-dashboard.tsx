@@ -34,6 +34,7 @@ type OutletReport = {
   transfer: number;
   admin: number;
   lines: (SaleLine & { total: number })[];
+  transactions: SaleTransaction[];
 };
 type SupabasePriceTierRow = {
   tier_code: string;
@@ -186,8 +187,8 @@ function buildSoReport({
     REPORT_DIVIDER,
     `TOTAL  : ${rp(total)}`,
     ...(deposit !== undefined ? [`TITIP : ${rp(deposit)}`] : []),
-    `TOTAL TF : ${rp(transfer)}`,
-    `ADMIN    : ${rp(admin)}`,
+    ...(transfer > 0 ? [`TOTAL TF : ${rp(transfer)}`] : []),
+    ...(admin > 0 ? [`ADMIN    : ${rp(admin)}`] : []),
     ...(withMentions ? ["", REPORT_MENTIONS] : []),
   ].join("\n");
 }
@@ -403,6 +404,7 @@ export default function PosDashboard() {
   const [transactionLoadError, setTransactionLoadError] = useState("");
   const [operationError, setOperationError] = useState("");
   const [savingSale, setSavingSale] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; error: boolean } | null>(
     null,
   );
@@ -503,14 +505,14 @@ export default function PosDashboard() {
             ? "Data barang dan tier harga masih kosong."
             : "";
         const outletError = outletResponse.error
-          ? `Daftar ruko gagal dimuat: ${outletResponse.error.message}`
+          ? `Daftar cabang gagal dimuat: ${outletResponse.error.message}`
           : formattedOutlets.length === 0
-            ? "Data ruko masih kosong."
+            ? "Data cabang masih kosong."
             : "";
         setProductLoadError(productError);
         setOutletLoadError(
           outletError
-            ? `Data ruko belum tersedia: ${outletError}`
+            ? `Data cabang belum tersedia: ${outletError}`
             : "",
         );
         setMasterLoadError([productError, outletError].filter(Boolean).join(" "));
@@ -559,7 +561,7 @@ export default function PosDashboard() {
           error instanceof Error ? error.message : "Kesalahan tidak diketahui.";
         setMasterLoadError(`Gagal memuat data master Supabase: ${message}`);
         setProductLoadError(`Data barang tidak dapat dimuat: ${message}`);
-        setOutletLoadError(`Daftar ruko tidak dapat dimuat: ${message}`);
+        setOutletLoadError(`Daftar cabang tidak dapat dimuat: ${message}`);
         setTransactionLoadError(`Gagal memuat laporan dari database: ${message}`);
       } finally {
         setMasterReady(true);
@@ -688,7 +690,7 @@ export default function PosDashboard() {
 
       if (removedIds.length > 0) {
         if (removedIds.some((id) => !Number.isSafeInteger(id))) {
-          throw new Error("ID ruko yang akan dihapus tidak valid.");
+          throw new Error("ID cabang yang akan dihapus tidak valid.");
         }
         const { error } = await supabase
           .from("rukos")
@@ -707,9 +709,9 @@ export default function PosDashboard() {
       return true;
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "Gagal menyimpan data ruko.";
-      setOperationError(`Data ruko gagal disimpan ke database: ${message}`);
-      setToast({ message: "Gagal menyimpan ruko ke database.", error: true });
+        error instanceof Error ? error.message : "Gagal menyimpan data cabang.";
+      setOperationError(`Data cabang gagal disimpan ke database: ${message}`);
+      setToast({ message: "Gagal menyimpan cabang ke database.", error: true });
       return false;
     }
   }
@@ -786,7 +788,7 @@ export default function PosDashboard() {
   const outletReports = useMemo(() => {
     const groups = new Map<string, OutletReport>();
     for (const transaction of dailyTransactions) {
-      const outletName = transaction.outletName?.trim() || "Tanpa ruko";
+      const outletName = transaction.outletName?.trim() || "Tanpa cabang";
       let report = groups.get(outletName);
       if (!report) {
         report = {
@@ -799,9 +801,11 @@ export default function PosDashboard() {
           transfer: 0,
           admin: 0,
           lines: [],
+          transactions: [],
         };
         groups.set(outletName, report);
       }
+      report.transactions.push(transaction);
       report.transactionCount += 1;
       report.transfer += transaction.transferAmount ?? 0;
       report.admin += transaction.adminAmount ?? 0;
@@ -844,10 +848,22 @@ export default function PosDashboard() {
   const difference = receivedAmount - cartTotal;
   const hasDeposit = depositAmount !== "";
   
+  const editingTransaction = useMemo(
+    () =>
+      editingId
+        ? (transactions.find((transaction) => transaction.id === editingId) ??
+          null)
+        : null,
+    [editingId, transactions],
+  );
+  const summaryDateKey = editingTransaction
+    ? localDateKey(new Date(editingTransaction.createdAt))
+    : currentDate;
+
   const saleSummary = useMemo(() => {
     return buildSoReport({
       outletName: selectedOutlet?.name ?? "",
-      dateKey: mounted ? currentDate : "",
+      dateKey: mounted ? summaryDateKey : "",
       lines: cart,
       deposit: hasDeposit ? receivedAmount : undefined,
       transfer: transferValue,
@@ -856,7 +872,7 @@ export default function PosDashboard() {
   }, [
     selectedOutlet,
     mounted,
-    currentDate,
+    summaryDateKey,
     cart,
     hasDeposit,
     receivedAmount,
@@ -901,6 +917,64 @@ export default function PosDashboard() {
     );
   }
 
+  function resetCashierForm() {
+    setCart([]);
+    setDepositAmount("");
+    setTransferAmount("");
+    setAdminInput(null);
+    setSelectedProduct(null);
+    setSelectedOutlet(null);
+    setSearchOutlet("");
+    setSearchProduct("");
+    setEditingId(null);
+  }
+
+  function startEditTransaction(transaction: SaleTransaction) {
+    const outletName = transaction.outletName?.trim() ?? "";
+    const outlet: Outlet | null = outletName
+      ? (masterOutlets.find((item) => item.name === outletName) ?? {
+          id: `edit:${outletName}`,
+          name: outletName,
+        })
+      : null;
+    setEditingId(transaction.id);
+    setSelectedOutlet(outlet);
+    setSearchOutlet("");
+    setSearchProduct("");
+    setSelectedProduct(null);
+    setCart(
+      transaction.lines.map((line) => ({
+        ...line,
+        key: `${line.productId}:${line.tierId}`,
+      })),
+    );
+    setDepositAmount(
+      transaction.amountReceived !== undefined
+        ? String(transaction.amountReceived)
+        : "",
+    );
+    setTransferAmount(
+      transaction.transferAmount !== undefined
+        ? String(transaction.transferAmount)
+        : "",
+    );
+    setAdminInput(
+      transaction.adminAmount !== undefined
+        ? String(transaction.adminAmount)
+        : null,
+    );
+    setView("cashier");
+    setToast({
+      message: "Transaksi dimuat ke Laku. Ubah lalu simpan perubahan.",
+      error: false,
+    });
+  }
+
+  function cancelEdit() {
+    resetCashierForm();
+    setView("report");
+  }
+
   async function checkout() {
     if (cart.length === 0) return;
     if (!selectedOutlet) {
@@ -914,10 +988,18 @@ export default function PosDashboard() {
       });
       return;
     }
+    if (editingId && !editingTransaction) {
+      setToast({
+        message:
+          "Transaksi yang diedit sudah tidak ada (mungkin kedaluwarsa). Batalkan edit lalu buat transaksi baru.",
+        error: true,
+      });
+      return;
+    }
     setSavingSale(true);
     const transaction: SaleTransaction = {
-      id: crypto.randomUUID(),
-      createdAt: new Date().toISOString(),
+      id: editingTransaction?.id ?? crypto.randomUUID(),
+      createdAt: editingTransaction?.createdAt ?? new Date().toISOString(),
       outletName: selectedOutlet.name,
       ...(hasDeposit ? { amountReceived: receivedAmount } : {}),
       ...(transferAmount !== "" ? { transferAmount: transferValue } : {}),
@@ -934,19 +1016,33 @@ export default function PosDashboard() {
     };
 
     try {
-      const { error } = await supabase
-        .from("sales_transactions")
-        .insert(saleToDatabaseRow(transaction));
-      if (error) throw error;
-
-      setTransactions((current) => [transaction, ...current]);
-      setCart([]);
-      setDepositAmount("");
-      setTransferAmount("");
-      setAdminInput(null);
-      setSelectedProduct(null);
-      setOperationError("");
-      setToast({ message: "Penjualan berhasil disimpan ke database.", error: false });
+      if (editingTransaction) {
+        const { error } = await supabase
+          .from("sales_transactions")
+          .update(saleToDatabaseRow(transaction))
+          .eq("id", transaction.id);
+        if (error) throw error;
+        setTransactions((current) =>
+          current.map((item) => (item.id === transaction.id ? transaction : item)),
+        );
+        resetCashierForm();
+        setView("report");
+        setOperationError("");
+        setToast({ message: "Perubahan laporan berhasil disimpan.", error: false });
+      } else {
+        const { error } = await supabase
+          .from("sales_transactions")
+          .insert(saleToDatabaseRow(transaction));
+        if (error) throw error;
+        setTransactions((current) => [transaction, ...current]);
+        setCart([]);
+        setDepositAmount("");
+        setTransferAmount("");
+        setAdminInput(null);
+        setSelectedProduct(null);
+        setOperationError("");
+        setToast({ message: "Penjualan berhasil disimpan ke database.", error: false });
+      }
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Gagal menyimpan transaksi.";
@@ -998,7 +1094,7 @@ export default function PosDashboard() {
       .join("\n\n");
     await copyText(
       `${body}\n\n${REPORT_MENTIONS}`,
-      "Laporan semua ruko disalin, siap ditempel ke WhatsApp.",
+      "Laporan semua cabang disalin, siap ditempel ke WhatsApp.",
     );
   }
 
@@ -1016,7 +1112,7 @@ export default function PosDashboard() {
 
   const activeTitle =
     view === "cashier"
-      ? "Kasir"
+      ? "Laku"
       : view === "report"
         ? "Laporan barang laku"
         : "Data master";
@@ -1070,11 +1166,37 @@ export default function PosDashboard() {
           )}
 
           {view === "cashier" ? (
-            <section className="workspace-grid cashier-layout" aria-label="Kasir">
+            <section className="workspace-grid cashier-layout" aria-label="Laku">
               <div className="cashier-left-stack">
+                {editingId && (
+                  <div className="storage-alert" role="status">
+                    <Icon name="alert" size={17} />
+                    <span>
+                      Mode edit laporan
+                      {editingTransaction
+                        ? ` (${new Date(
+                            editingTransaction.createdAt,
+                          ).toLocaleString("id-ID", {
+                            day: "numeric",
+                            month: "short",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })})`
+                        : ""}
+                      . Perubahan baru tersimpan setelah menekan “Simpan perubahan”.
+                    </span>
+                    <button
+                      className="secondary-button"
+                      onClick={cancelEdit}
+                      type="button"
+                    >
+                      Batal edit
+                    </button>
+                  </div>
+                )}
                 <section className="panel outlet-panel">
                   <label className="field-label" htmlFor="outlet-search">
-                    ▸ Cari &amp; pilih ruko / outlet
+                    ▸ Cari &amp; pilih cabang / outlet
                   </label>
                   <div className="outlet-search-wrap" style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                     <span className="outlet-icon-wrapper" style={{ position: 'absolute', left: '12px', display: 'flex', pointerEvents: 'none' }}>
@@ -1089,7 +1211,7 @@ export default function PosDashboard() {
                         setSelectedOutlet(null);
                         setSearchOutlet(event.target.value);
                       }}
-                      placeholder="Ketik nama ruko..."
+                      placeholder="Ketik nama cabang..."
                       value={selectedOutlet?.name ?? searchOutlet}
                     />
                     {selectedOutlet && (
@@ -1130,10 +1252,10 @@ export default function PosDashboard() {
                       searchOutlet.trim().length > 0 && (
                         <div className="outlet-no-results">
                           {!masterReady
-                            ? "Memuat daftar ruko..."
+                            ? "Memuat daftar cabang..."
                             : outletLoadError
                               ? outletLoadError
-                              : `Tidak ada ruko yang cocok dengan “${searchOutlet.trim()}”. Coba nama yang lebih pendek.`}
+                              : `Tidak ada cabang yang cocok dengan “${searchOutlet.trim()}”. Coba nama yang lebih pendek.`}
                         </div>
                       )}
                   </div>
@@ -1178,7 +1300,7 @@ export default function PosDashboard() {
                         return product.tiers.length > 0 ? (
                           <button
                             className="product-result"
-                            key={product.id}
+                            key={product.name}
                             onClick={() => setSelectedProduct(product)}
                             type="button"
                           >
@@ -1237,7 +1359,7 @@ export default function PosDashboard() {
                                 </div>
                                 <div className="sale-item-tags">
                                   <span>{formatRupiah(line.unitPrice)} / </span>
-                                  <span>{line.tierId}</span>
+                                  <span>{line.tierLabel}</span>
                                 </div>
                               </div>
                             </div>
@@ -1454,7 +1576,11 @@ export default function PosDashboard() {
                     type="button"
                   >
                     <Icon name={savingSale ? "clock" : "check"} size={16} />
-                    {savingSale ? "Menyimpan ke database..." : "Simpan penjualan"}
+                    {savingSale
+                      ? "Menyimpan ke database..."
+                      : editingId
+                        ? "Simpan perubahan"
+                        : "Simpan penjualan"}
                   </button>
                 </div>
               </aside>
@@ -1467,6 +1593,7 @@ export default function PosDashboard() {
               onCopyAll={copyAllReports}
               onCopyOutlet={copyOutletReport}
               onDateChange={setSelectedDate}
+              onEditTransaction={startEditTransaction}
               reports={outletReports}
             />
           ) : (
@@ -1527,7 +1654,7 @@ export default function PosDashboard() {
                   type="button"
                 >
                   <span>
-                    <strong>{tier.id}</strong>
+                    <strong>{tier.label}</strong>
                     <small>{selectedProduct.name}</small>
                   </span>
                   <strong className="tier-option-price">
@@ -1566,7 +1693,7 @@ function Navigation({
         type="button"
       >
         <Icon name="report" size={18} />
-        Laporan barang laku
+        Laporan
       </button>
       <button
         className={`nav-item${view === "cashier" ? " active" : ""}`}
@@ -1574,7 +1701,7 @@ function Navigation({
         type="button"
       >
         <Icon name="cashier" size={18} />
-        Kasir
+        Laku
       </button>
       <button
         className={`nav-item${view === "master" ? " active" : ""}`}
@@ -1596,11 +1723,13 @@ function ReportPanel({
   onDateChange,
   onCopyOutlet,
   onCopyAll,
+  onEditTransaction,
 }: {
   date: string;
   reports: OutletReport[];
   ready: boolean;
   error: string;
+  onEditTransaction: (transaction: SaleTransaction) => void;
   onDateChange: (date: string) => void;
   onCopyOutlet: (report: OutletReport) => void;
   onCopyAll: (reports: OutletReport[]) => void;
@@ -1620,14 +1749,14 @@ function ReportPanel({
   );
 
   return (
-    <section className="report-page" aria-label="Laporan barang laku per ruko">
+    <section className="report-page" aria-label="Laporan barang laku per cabang">
       <div className="panel">
         <div className="report-toolbar">
           <div>
-            <h2 className="panel-title">Barang laku per ruko</h2>
+            <h2 className="panel-title">Barang laku per cabang</h2>
             <p className="panel-subtitle">
-              Setiap ruko punya daftar barang lakunya sendiri, sesuai data yang
-              disimpan dari kasir.
+              Setiap cabang punya daftar barang lakunya sendiri, sesuai data yang
+              disimpan dari Laku.
             </p>
           </div>
           <div className="report-filters">
@@ -1644,14 +1773,14 @@ function ReportPanel({
             </label>
             <label className="report-date">
               <Icon name="search" size={15} />
-              <span>Ruko</span>
+              <span>cabang</span>
               <select
                 aria-label="Filter ruko"
                 className="date-input"
                 onChange={(event) => setOutletFilter(event.target.value)}
                 value={activeFilter}
               >
-                <option value="">Semua ruko</option>
+                <option value="">Semua cabang</option>
                 {reports.map((report) => (
                   <option key={report.outletName} value={report.outletName}>
                     {report.outletName}
@@ -1663,7 +1792,7 @@ function ReportPanel({
         </div>
         <div className="report-footer">
           <span>
-            {visible.length} ruko <strong>·</strong> {totalItems} item terjual{" "}
+            {visible.length} cabang <strong>·</strong> {totalItems} item terjual{" "}
             <strong>·</strong> {totalTransactions} transaksi
           </span>
           <span>
@@ -1676,7 +1805,7 @@ function ReportPanel({
             type="button"
           >
             <Icon name="copy" size={15} />
-            Salin semua ruko
+            Salin semua Cabang
           </button>
         </div>
       </div>
@@ -1691,8 +1820,8 @@ function ReportPanel({
                   <>
                     Belum ada barang terjual pada tanggal ini.
                     <br />
-                    Penjualan yang disimpan dari kasir akan muncul di sini,
-                    dipisah per ruko.
+                    Penjualan yang disimpan dari Laku akan muncul di sini,
+                    dipisah per cabang.
                   </>
                 )}
         </div>
@@ -1750,14 +1879,71 @@ function ReportPanel({
                   <strong>{formatRupiah(report.deposit)}</strong>
                 </div>
               )}
-              <div>
-                <span>TOTAL TF</span>
-                <strong>{formatRupiah(report.transfer)}</strong>
-              </div>
-              <div>
-                <span>ADMIN</span>
-                <strong>{formatRupiah(report.admin)}</strong>
-              </div>
+              {report.transfer > 0 && (
+                <div>
+                  <span>TOTAL TF</span>
+                  <strong>{formatRupiah(report.transfer)}</strong>
+                </div>
+              )}
+              {report.admin > 0 && (
+                <div>
+                  <span>ADMIN</span>
+                  <strong>{formatRupiah(report.admin)}</strong>
+                </div>
+              )}
+            </div>
+            <div className="table-scroll">
+              <table className="sales-table">
+                <thead>
+                  <tr>
+                    <th>JAM</th>
+                    <th>ITEM</th>
+                    <th>TOTAL</th>
+                    <th>AKSI</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...report.transactions]
+                    .sort(
+                      (a, b) =>
+                        Date.parse(a.createdAt) - Date.parse(b.createdAt),
+                    )
+                    .map((transaction) => (
+                      <tr key={transaction.id}>
+                        <td>
+                          {new Date(transaction.createdAt).toLocaleTimeString(
+                            "id-ID",
+                            { hour: "2-digit", minute: "2-digit" },
+                          )}
+                        </td>
+                        <td>
+                          {transaction.lines.reduce(
+                            (sum, line) => sum + line.quantity,
+                            0,
+                          )}
+                        </td>
+                        <td>
+                          {formatRupiah(
+                            transaction.lines.reduce(
+                              (sum, line) =>
+                                sum + line.quantity * line.unitPrice,
+                              0,
+                            ),
+                          )}
+                        </td>
+                        <td>
+                          <button
+                            className="secondary-button"
+                            onClick={() => onEditTransaction(transaction)}
+                            type="button"
+                          >
+                            Edit di Laku
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
             </div>
           </article>
         ))
