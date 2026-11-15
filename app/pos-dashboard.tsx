@@ -1154,7 +1154,7 @@ export default function PosDashboard() {
 
       <div className="main-area">
         <header className="topbar">
-          <h1 className="topbar-title text-lg font-bold">Meksiko Group</h1>
+          <h1 className="topbar-title text-lg font-bold">Risk Manajemen</h1>
         </header>
 
         <main className="content-wrap">

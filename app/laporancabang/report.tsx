@@ -14,6 +14,7 @@ import { localDateKey, SaleLine } from "../lib/sales";
 
 type Outlet = { id: string; name: string };
 type Expense = { id: string; description: string; amount: number };
+type ExtraIncome = { id: string; description: string; amount: number };
 type ProductTier = { id: string; label: string; price: number };
 type CatalogProduct = {
   id: string;
@@ -44,6 +45,7 @@ type SavedReport = {
   deposit_amount: number;
   admin_fee: number;
   expenses: unknown;
+  additional_incomes?: unknown;
   sales_lines?: unknown;
   stock_values: unknown;
 };
@@ -62,24 +64,26 @@ function isSalesRow(value: unknown): value is SalesRow {
   );
 }
 
-function parseExpenses(value: unknown): Expense[] {
+function parseMoneyItems(value: unknown): Expense[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
     if (!item || typeof item !== "object") return [];
-    const expense = item as Record<string, unknown>;
+    const entry = item as Record<string, unknown>;
     if (
-      typeof expense.description !== "string" ||
-      typeof expense.amount !== "number" ||
-      !Number.isFinite(expense.amount) ||
-      expense.amount < 0
+      typeof entry.description !== "string" ||
+      typeof entry.amount !== "number" ||
+      !Number.isFinite(entry.amount) ||
+      entry.amount < 0
     ) {
       return [];
     }
-    return [{
-      id: typeof expense.id === "string" ? expense.id : crypto.randomUUID(),
-      description: expense.description,
-      amount: expense.amount,
-    }];
+    return [
+      {
+        id: typeof entry.id === "string" ? entry.id : crypto.randomUUID(),
+        description: entry.description,
+        amount: entry.amount,
+      },
+    ];
   });
 }
 
@@ -117,15 +121,17 @@ function parseSavedSalesLines(
     const product = catalog.find((entry) => entry.id === line.productId);
     const tier = product?.tiers.find((entry) => entry.id === line.tierId);
     if (!product || !tier) return [];
-    return [{
-      key: line.key,
-      productId: product.id,
-      tierId: tier.id,
-      productName: product.name,
-      quantity: line.quantity,
-      tierLabel: tier.label,
-      unitPrice: line.unitPrice,
-    }];
+    return [
+      {
+        key: line.key,
+        productId: product.id,
+        tierId: tier.id,
+        productName: product.name,
+        quantity: line.quantity,
+        tierLabel: tier.label,
+        unitPrice: line.unitPrice,
+      },
+    ];
   });
 }
 
@@ -246,19 +252,23 @@ function normalizeCatalogRows(rows: unknown[]): CatalogProduct[] {
       ) {
         return [];
       }
-      return [{
-        id: tier.tier_code,
-        label: tier.tier_name,
-        price: tier.price_idr,
-      }];
+      return [
+        {
+          id: tier.tier_code,
+          label: tier.tier_name,
+          price: tier.price_idr,
+        },
+      ];
     });
 
-    return [{
-      id: String(row.id),
-      name: row.name,
-      category: row.category,
-      tiers,
-    }];
+    return [
+      {
+        id: String(row.id),
+        name: row.name,
+        category: row.category,
+        tiers,
+      },
+    ];
   });
 }
 
@@ -274,7 +284,7 @@ function MoneyInput({
   return (
     <input
       aria-label={label}
-      className="w-full min-w-0 bg-transparent text-right tabular-nums outline-none print:placeholder-transparent"
+      className="w-full min-w-0 bg-transparent text-right tabular-nums outline-none placeholder:text-slate-300 print:placeholder-transparent"
       inputMode="numeric"
       onChange={(event) =>
         onChange(Number(event.target.value.replace(/\D/g, "")) || 0)
@@ -348,7 +358,7 @@ function ProductSearch({
       <input
         aria-label={label}
         autoComplete="off"
-        className="w-full min-w-0 bg-transparent px-0.5 font-semibold outline-none placeholder:font-normal placeholder:text-slate-400 print:placeholder-transparent"
+        className="w-full min-w-0 bg-transparent px-0.5 font-normal outline-none placeholder:text-slate-400 print:placeholder-transparent"
         onBlur={() => {
           setFocused(false);
           setQuery("");
@@ -384,7 +394,7 @@ function ProductSearch({
       />
       {isOpen && (
         <ul
-          className="no-export fixed z-50 max-h-60 overflow-auto rounded-md border border-slate-300 bg-white py-1 text-[13px] shadow-lg"
+          className="no-export fixed z-50 max-h-60 overflow-auto border border-slate-400 bg-white py-1 text-[13px] shadow-md"
           role="listbox"
           style={{ left: rect.left, top: rect.top, width: rect.width }}
         >
@@ -394,7 +404,9 @@ function ProductSearch({
             results.map((item, resultIndex) => (
               <li
                 aria-selected={resultIndex === active}
-                className={`cursor-pointer px-3 py-1.5 ${resultIndex === active ? "bg-emerald-100" : "hover:bg-emerald-50"}`}
+                className={`cursor-pointer px-3 py-1.5 ${
+                  resultIndex === active ? "bg-emerald-100" : "hover:bg-emerald-50"
+                }`}
                 key={item.id}
                 onMouseDown={(event) => {
                   event.preventDefault();
@@ -430,6 +442,7 @@ export default function BranchReport() {
   const [previousCash, setPreviousCash] = useState(0);
   const [depositAmount, setDepositAmount] = useState(0);
   const [adminFee, setAdminFee] = useState(0);
+  const [additionalIncomes, setAdditionalIncomes] = useState<ExtraIncome[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [stockValues, setStockValues] = useState<Record<string, string>>({});
   const [transferTotal, setTransferTotal] = useState(0);
@@ -449,6 +462,7 @@ export default function BranchReport() {
       width: Math.max(box.width, 220),
     });
   }
+
   useEffect(() => {
     let active = true;
     async function loadOutlets() {
@@ -531,7 +545,7 @@ export default function BranchReport() {
         supabase
           .from("branch_daily_reports")
           .select(
-            "previous_cash, deposit_amount, admin_fee, expenses, sales_lines, stock_values",
+            "previous_cash, deposit_amount, admin_fee, expenses, additional_incomes, sales_lines, stock_values",
           )
           .eq("report_date", reportDate)
           .eq("outlet_name", outletName)
@@ -563,7 +577,10 @@ export default function BranchReport() {
       let saved = savedResponse.data as SavedReport | null;
       let reportError = "";
       if (savedResponse.error) {
-        if (savedResponse.error.message.includes("sales_lines")) {
+        if (
+          savedResponse.error.message.includes("sales_lines") ||
+          savedResponse.error.message.includes("additional_incomes")
+        ) {
           const legacyResponse = await supabase
             .from("branch_daily_reports")
             .select(
@@ -576,8 +593,6 @@ export default function BranchReport() {
             reportError = `Rekap keuangan belum dapat dimuat: ${legacyResponse.error.message}`;
           } else {
             saved = legacyResponse.data as SavedReport | null;
-            reportError =
-              "Agar baris produk dan harga tersimpan, jalankan migrasi Supabase untuk menambahkan kolom sales_lines.";
           }
         } else {
           reportError = `Rekap keuangan belum dapat dimuat: ${savedResponse.error.message}`;
@@ -594,7 +609,8 @@ export default function BranchReport() {
       setPreviousCash(saved?.previous_cash ?? 0);
       setDepositAmount(saved?.deposit_amount ?? received);
       setAdminFee(saved?.admin_fee ?? admin);
-      setExpenses(parseExpenses(saved?.expenses));
+      setAdditionalIncomes(parseMoneyItems(saved?.additional_incomes));
+      setExpenses(parseMoneyItems(saved?.expenses));
       setStockValues(parseStockValues(saved?.stock_values));
       setLoadError(reportError);
       setIsLoading(false);
@@ -621,11 +637,15 @@ export default function BranchReport() {
       ),
     [products],
   );
+  const additionalIncomeTotal = useMemo(
+    () => additionalIncomes.reduce((sum, item) => sum + item.amount, 0),
+    [additionalIncomes],
+  );
   const expenseTotal = useMemo(
     () => expenses.reduce((sum, expense) => sum + expense.amount, 0),
     [expenses],
   );
-  const totalFunds = previousCash + salesTotal;
+  const totalFunds = previousCash + salesTotal + additionalIncomeTotal;
   const endingCash =
     totalFunds - transferTotal - depositAmount - adminFee - expenseTotal;
   const dateLabel = fullDate(reportDate);
@@ -633,15 +653,29 @@ export default function BranchReport() {
   const branchLabel = uppercaseOutlet.startsWith("MEKSIKO ")
     ? uppercaseOutlet
     : `MEKSIKO ${uppercaseOutlet}`;
-  const rowCount = Math.max(12, products.length + 2, expenses.length + 9);
 
-const reportRows = useMemo(() => {
-    const lines: Array<{
-      type: "fixed" | "expense" | "blank" | "ending";
+  const rowCount = Math.max(
+    14,
+    products.length + 2,
+    expenses.length + additionalIncomes.length + 11,
+  );
+
+  const reportRows = useMemo(() => {
+const lines: Array<{
+      type:
+        | "fixed"
+        | "extra_income"
+        | "expense"
+        | "add_income"
+        | "add_expense"
+        | "blank"
+        | "ending";
       label?: string;
       amount?: number;
+      extraIncome?: ExtraIncome;
       expense?: Expense;
-      isBold?: boolean; // Tambahkan properti opsional ini
+      isBold?: boolean;
+      highlight?: "deposit" | "ending"; // Ubah "total" menjadi "deposit"
     }> = [
       { type: "fixed", label: "SISA UANG SEBELUMNYA", amount: previousCash },
       {
@@ -649,20 +683,44 @@ const reportRows = useMemo(() => {
         label: `PENJUALAN TGL ${dateLabel.toLocaleUpperCase("id-ID")}`,
         amount: salesTotal,
       },
-      { type: "fixed", label: "TOTAL", amount: totalFunds }, 
+      ...additionalIncomes.map((extraIncome) => ({
+        type: "extra_income" as const,
+        extraIncome,
+      })),
+      { type: "add_income" },
+      {
+        type: "fixed",
+        label: "TOTAL",
+        amount: totalFunds,
+        isBold: true, // Hapus highlight dari TOTAL (tetap bold, background putih)
+      },
       { type: "blank" },
-      { type: "fixed", label: "SETOR", amount: depositAmount, isBold: true }, 
+      {
+        type: "fixed",
+        label: "SETOR",
+        amount: depositAmount,
+        isBold: true,
+        highlight: "deposit", // Pindahkan highlight ke SETOR
+      },
       { type: "fixed", label: "BIAYA ADMIN", amount: adminFee },
       { type: "fixed", label: "PENGELUARAN" },
       ...expenses.map((expense) => ({
         type: "expense" as const,
         expense,
       })),
+      { type: "add_expense" },
     ];
     while (lines.length < rowCount - 1) lines.push({ type: "blank" });
-    lines.push({ type: "ending", label: "JUMLAH AKHIR UANG", amount: endingCash });
+    lines.push({
+      type: "ending",
+      label: "JUMLAH AKHIR UANG",
+      amount: endingCash,
+      isBold: true,
+      highlight: "ending",
+    });
     return lines;
   }, [
+    additionalIncomes,
     adminFee,
     dateLabel,
     depositAmount,
@@ -672,8 +730,23 @@ const reportRows = useMemo(() => {
     rowCount,
     salesTotal,
     totalFunds,
-    transferTotal,
   ]);
+
+  const updateExtraIncome = useCallback(
+    (id: string, patch: Partial<ExtraIncome>) => {
+      setAdditionalIncomes((current) =>
+        current.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+      );
+    },
+    [],
+  );
+
+  function addExtraIncome() {
+    setAdditionalIncomes((current) => [
+      ...current,
+      { id: crypto.randomUUID(), description: "", amount: 0 },
+    ]);
+  }
 
   const updateExpense = useCallback(
     (id: string, patch: Partial<Expense>) => {
@@ -697,10 +770,7 @@ const reportRows = useMemo(() => {
     setProducts((current) => [...current, createEmptyLine()]);
   }
 
-  function updateProductLine(
-    key: string,
-    patch: Partial<ReportProduct>,
-  ) {
+  function updateProductLine(key: string, patch: Partial<ReportProduct>) {
     setProducts((current) =>
       current.map((line) => (line.key === key ? { ...line, ...patch } : line)),
     );
@@ -708,12 +778,11 @@ const reportRows = useMemo(() => {
 
   function selectProduct(key: string, productId: string) {
     const product = catalog.find((item) => item.id === productId);
-    
-    // Cari tier "btl" atau ambil tier pertama jika "btl" tidak ditemukan
-    const tier = 
-      product?.tiers.find((item) => 
-        item.label.toLocaleLowerCase("id-ID").includes("btl") ||
-        item.id.toLocaleLowerCase("id-ID").includes("btl")
+    const tier =
+      product?.tiers.find(
+        (item) =>
+          item.label.toLocaleLowerCase("id-ID").includes("btl") ||
+          item.id.toLocaleLowerCase("id-ID").includes("btl"),
       ) ?? product?.tiers[0];
 
     updateProductLine(key, {
@@ -741,40 +810,55 @@ const reportRows = useMemo(() => {
     setIsSaving(true);
     setNotice("");
     try {
-      const { error } = await supabase.from("branch_daily_reports").upsert(
-        {
-          report_date: reportDate,
-          outlet_name: outletName,
-          previous_cash: previousCash,
-          deposit_amount: depositAmount,
-          admin_fee: adminFee,
-          expenses: expenses.map(({ description, amount }) => ({
-            description: description.trim(),
-            amount,
+      const payload = {
+        report_date: reportDate,
+        outlet_name: outletName,
+        previous_cash: previousCash,
+        deposit_amount: depositAmount,
+        admin_fee: adminFee,
+        additional_incomes: additionalIncomes.map(({ description, amount }) => ({
+          description: description.trim(),
+          amount,
+        })),
+        expenses: expenses.map(({ description, amount }) => ({
+          description: description.trim(),
+          amount,
+        })),
+        sales_lines: products
+          .filter((line) => line.productId && line.quantity > 0)
+          .map(({ key, productId, tierId, quantity, unitPrice }) => ({
+            key,
+            productId,
+            tierId,
+            quantity,
+            unitPrice,
           })),
-          sales_lines: products
-            .filter((line) => line.productId && line.quantity > 0)
-            .map(({ key, productId, tierId, quantity, unitPrice }) => ({
-              key,
-              productId,
-              tierId,
-              quantity,
-              unitPrice,
-            })),
-          stock_values: stockValues,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "report_date,outlet_name" },
-      );
-      if (error) throw error;
+        stock_values: stockValues,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase
+        .from("branch_daily_reports")
+        .upsert(payload, { onConflict: "report_date,outlet_name" });
+
+      if (error) {
+        if (error.message.includes("additional_incomes")) {
+          const { additional_incomes: _, ...fallbackPayload } = payload;
+          const fallback = await supabase
+            .from("branch_daily_reports")
+            .upsert(fallbackPayload, { onConflict: "report_date,outlet_name" });
+          if (fallback.error) throw fallback.error;
+        } else {
+          throw error;
+        }
+      }
+
       setLoadError("");
       setNotice("Rekap dan sisa stok berhasil disimpan.");
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Kesalahan tidak diketahui.";
-      setLoadError(
-        `Rekap gagal disimpan ke database: ${message}. Jalankan migrasi Supabase terbaru.`,
-      );
+      setLoadError(`Rekap gagal disimpan ke database: ${message}`);
     } finally {
       setIsSaving(false);
     }
@@ -800,7 +884,7 @@ const reportRows = useMemo(() => {
         .replace(/[^a-z0-9]+/g, "-")}-${reportDate}.jpg`;
       link.href = dataUrl;
       link.click();
-      setNotice("Laporan berhasil diekspor sebagai JPG.");
+      setNotice("Laporan berhasil diekspor sebagai JPG (Ukuran A4).");
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Gagal membuat gambar.";
@@ -811,28 +895,45 @@ const reportRows = useMemo(() => {
   }
 
   return (
-    <main className="min-h-screen bg-slate-100 px-3 py-5 text-slate-900 sm:px-6 sm:py-8">
-      <div className="mx-auto max-w-[1680px]">
-        <header className="mb-5 flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-end sm:justify-between sm:p-5">
+    <main className="min-h-screen bg-[#f4f5f4] px-3 py-5 text-slate-900 sm:px-6 sm:py-8 print:bg-white print:p-0">
+      <style>{`
+        @media print {
+          @page {
+            size: A4 landscape;
+            margin: 8mm;
+          }
+          body {
+            background: #ffffff !important;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+          .no-export, .no-print {
+            display: none !important;
+          }
+        }
+      `}</style>
+
+      <div className="mx-auto max-w-[1400px] print:max-w-none">
+        <header className="no-print mb-6 flex flex-col gap-4 rounded-xl border border-slate-300 bg-white p-4 shadow-sm lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">
+            <p className="text-xs font-bold uppercase tracking-wider text-emerald-800">
               Meksiko Store
             </p>
-            <h1 className="mt-1 text-2xl font-extrabold tracking-tight sm:text-3xl">
-              Laporan cabang
+            <h1 className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl">
+              Laporan Cabang
             </h1>
-            <p className="mt-1 text-sm text-slate-500">
-              Laporan penjualan dan rekap uang harian.
+            <p className="mt-0.5 text-xs text-slate-500">
+              Laporan penjualan produk, stok akhir, dan rekap kas harian (Format A4).
             </p>
           </div>
-          <div className="grid gap-3 sm:grid-cols-[minmax(190px,1fr)_180px_auto_auto] sm:items-end">
-            <label className="grid gap-1 text-xs font-semibold text-slate-600">
-              <div className="relative grid gap-1 text-xs font-semibold text-slate-600">
-              Cabang / ruko
+
+          <div className="grid gap-3 sm:grid-cols-[minmax(190px,1fr)_165px_auto_auto_auto] sm:items-end">
+            <div className="relative grid gap-1 text-xs font-semibold text-slate-700">
+              <span>Cabang / ruko</span>
               <input
                 aria-label="Cari cabang atau ruko"
                 autoComplete="off"
-                className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none placeholder:text-slate-400"
+                className="h-9 rounded border border-slate-300 bg-white px-3 text-sm font-medium text-slate-900 outline-none focus:border-emerald-700 placeholder:text-slate-400"
                 onBlur={() => {
                   setOutletFocused(false);
                   setOutletQuery("");
@@ -849,11 +950,15 @@ const reportRows = useMemo(() => {
                 }}
                 onKeyDown={(event) => {
                   const filtered = outlets.filter((item) =>
-                    item.name.toLocaleLowerCase("id-ID").includes(outletQuery.trim().toLocaleLowerCase("id-ID"))
+                    item.name
+                      .toLocaleLowerCase("id-ID")
+                      .includes(outletQuery.trim().toLocaleLowerCase("id-ID")),
                   );
                   if (event.key === "ArrowDown") {
                     event.preventDefault();
-                    setOutletActiveIndex((current) => Math.min(current + 1, filtered.length - 1));
+                    setOutletActiveIndex((current) =>
+                      Math.min(current + 1, filtered.length - 1),
+                    );
                   } else if (event.key === "ArrowUp") {
                     event.preventDefault();
                     setOutletActiveIndex((current) => Math.max(current - 1, 0));
@@ -875,24 +980,38 @@ const reportRows = useMemo(() => {
               />
               {outletFocused && (
                 <ul
-                  className="no-export fixed z-50 max-h-60 overflow-auto rounded-md border border-slate-300 bg-white py-1 text-[13px] shadow-lg"
+                  className="no-export fixed z-50 max-h-60 overflow-auto border border-slate-400 bg-white py-1 text-[13px] shadow-md"
                   role="listbox"
-                  style={{ left: outletRect.left, top: outletRect.top, width: outletRect.width }}
+                  style={{
+                    left: outletRect.left,
+                    top: outletRect.top,
+                    width: outletRect.width,
+                  }}
                 >
                   {outlets.filter((item) =>
-                    item.name.toLocaleLowerCase("id-ID").includes(outletQuery.trim().toLocaleLowerCase("id-ID"))
+                    item.name
+                      .toLocaleLowerCase("id-ID")
+                      .includes(outletQuery.trim().toLocaleLowerCase("id-ID")),
                   ).length === 0 ? (
-                    <li className="px-3 py-2 text-slate-500">Cabang tidak ditemukan</li>
+                    <li className="px-3 py-2 text-slate-500">
+                      Cabang tidak ditemukan
+                    </li>
                   ) : (
                     outlets
                       .filter((item) =>
-                        item.name.toLocaleLowerCase("id-ID").includes(outletQuery.trim().toLocaleLowerCase("id-ID"))
+                        item.name
+                          .toLocaleLowerCase("id-ID")
+                          .includes(
+                            outletQuery.trim().toLocaleLowerCase("id-ID"),
+                          ),
                       )
                       .map((item, resultIndex) => (
                         <li
                           aria-selected={resultIndex === outletActiveIndex}
                           className={`cursor-pointer px-3 py-1.5 ${
-                            resultIndex === outletActiveIndex ? "bg-emerald-100" : "hover:bg-emerald-50"
+                            resultIndex === outletActiveIndex
+                              ? "bg-emerald-100 font-semibold text-emerald-900"
+                              : "hover:bg-emerald-50"
                           }`}
                           key={item.id}
                           onMouseDown={(event) => {
@@ -912,20 +1031,36 @@ const reportRows = useMemo(() => {
               )}
             </div>
 
-
-            </label>
-            <label className="grid gap-1 text-xs font-semibold text-slate-600">
-              Tanggal laporan
+            <label className="grid gap-1 text-xs font-semibold text-slate-700">
+              <span>Tanggal laporan</span>
               <input
-                className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900"
+                className="h-9 rounded border border-slate-300 bg-white px-3 text-sm font-medium text-slate-900 outline-none focus:border-emerald-700"
                 onChange={(event) => setSelectedDate(event.target.value)}
                 type="date"
                 value={reportDate}
               />
             </label>
-            
+
             <button
-              className="h-10 rounded-lg border border-slate-300 bg-green-800 px-4 text-sm font-bold text-white transition hover:bg-green-600 disabled:cursor-not-allowed disabled:opacity-60"
+              className="h-9 rounded border border-emerald-700 bg-white px-4 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={isSaving || !outletName}
+              onClick={saveReport}
+              type="button"
+            >
+              {isSaving ? "Menyimpan..." : "Simpan Rekap"}
+            </button>
+
+            <button
+              className="h-9 rounded border border-slate-400 bg-white px-4 text-sm font-semibold text-slate-800 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={!outletName}
+              onClick={() => window.print()}
+              type="button"
+            >
+              Cetak A4
+            </button>
+
+            <button
+              className="h-9 rounded bg-emerald-800 px-4 text-sm font-semibold text-white hover:bg-emerald-900 disabled:cursor-not-allowed disabled:opacity-60"
               disabled={isExporting || !outletName}
               onClick={exportJpg}
               type="button"
@@ -937,7 +1072,7 @@ const reportRows = useMemo(() => {
 
         {(loadError || catalogError) && (
           <div
-            className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+            className="no-print mb-4 rounded border border-red-300 bg-red-50 px-4 py-2.5 text-sm text-red-800"
             role="alert"
           >
             {[loadError, catalogError].filter(Boolean).join(" ")}
@@ -945,286 +1080,401 @@ const reportRows = useMemo(() => {
         )}
         {notice && (
           <div
-            className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"
+            className="no-print mb-4 rounded border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-900"
             role="status"
           >
             {notice}
           </div>
         )}
 
-        <div className="overflow-x-auto rounded-xl border border-slate-300 bg-white shadow-sm">
-          <section
-            aria-label="Laporan penjualan dan rekap keuangan"
-            className="grid min-w-[1400px] grid-cols-[1.3fr_0.7fr] gap-8 bg-white p-3 text-[13px] text-black sm:p-5 lg:gap-10 lg:p-7"
-            ref={reportRef}
-          >
-            <div className="min-w-0">
-              <div className="flex h-[54px] flex-col items-center justify-center border border-b-0 border-slate-300 text-center font-bold leading-tight">
-                <h2 className="text-[17px]">LAPORAN PENJUALAN</h2>
-                <p className="text-[16px]">{branchLabel || "CABANG"}</p>
-              </div>
-              <table className="w-full table-fixed border-collapse border border-slate-500">
-                <thead>
-                  <tr className="h-[34px] bg-[#dcebe5] text-center text-[12px] font-bold sm:text-[14px]">
-                    <th className="w-[14%] border border-slate-500 px-1">TANGGAL</th>
-                    <th className="w-[29%] border border-slate-500 px-1">NAMA PRODUCT</th>
-                    <th className="w-[21%] border border-slate-500 px-1">JUMLAH</th>
-                    <th className="w-[20%] border border-slate-500 px-1">NOMINAL</th>
-                    <th className="w-[16%] border border-slate-500 px-1">SISA STOK</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Array.from({ length: rowCount - 1 }, (_, index) => {
-                    const product = products[index];
-                    const selectedCatalogProduct = catalog.find(
-                      (item) => item.id === product?.productId,
-                    );
-                    return (
-                      <tr className="h-[34px]" key={product?.key ?? `empty-${index}`}>
-                        <td className="border border-slate-400 px-1.5 text-center">
-                          {product && index === 0 ? dateLabel : ""}
-                        </td>
-                        <td className="border border-slate-400 px-1">
-                          {product ? (
-                            <div className="flex items-center gap-1">
-                              <ProductSearch
-                                catalog={catalog}
-                                label={`Cari nama produk baris ${index + 1}`}
-                                onSelect={(productId) =>
-                                  selectProduct(product.key, productId)
-                                }
-                                selectedName={product.productName}
-                              />
+        {/* Lembar Kerja Kertas A4 Landscape (Klasik / Spreadsheet Style) */}
+        <div className="overflow-x-auto pb-4 print:overflow-visible print:pb-0">
+          <div className="mx-auto w-fit border border-slate-300 bg-white shadow-sm print:border-none print:shadow-none">
+            <section
+              aria-label="Laporan penjualan dan rekap keuangan"
+              className="grid w-[297mm] min-h-[210mm] grid-cols-[1.28fr_0.72fr] content-start gap-7 bg-white p-[10mm] font-sans text-[12px] text-slate-900 print:w-full print:min-h-0 print:p-0"
+              ref={reportRef}
+            >
+              {/* KOLOM KIRI: LAPORAN PENJUALAN */}
+              <div className="min-w-0 self-start border border-slate-500 bg-white">
+                <div className="border-b border-slate-500 bg-white py-2.5 text-center">
+                  <h2 className="text-[14px] font-bold tracking-wide text-slate-900">
+                    LAPORAN PENJUALAN
+                  </h2>
+                  <p className="mt-0.5 text-[13px] font-bold tracking-wide text-slate-900">
+                    {branchLabel || "CABANG"}
+                  </p>
+                </div>
+                <table className="w-full table-fixed border-collapse">
+                  <thead>
+                    <tr className="h-[32px] bg-[#dfece4] text-center text-[11px] font-bold text-slate-900">
+                      <th className="w-[15%] border-b border-slate-500 px-1">
+                        TANGGAL
+                      </th>
+                      <th className="w-[31%] border-b border-l border-slate-500 px-1">
+                        NAMA PRODUCT
+                      </th>
+                      <th className="w-[20%] border-b border-l border-slate-500 px-1">
+                        JUMLAH
+                      </th>
+                      <th className="w-[19%] border-b border-l border-slate-500 px-1">
+                        NOMINAL
+                      </th>
+                      <th className="w-[15%] border-b border-l border-slate-500 px-1">
+                        SISA STOK
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Array.from({ length: rowCount - 1 }, (_, index) => {
+                      const product = products[index];
+                      const selectedCatalogProduct = catalog.find(
+                        (item) => item.id === product?.productId,
+                      );
+                      return (
+                        <tr
+                          className="h-[29px] bg-white"
+                          key={product?.key ?? `empty-${index}`}
+                        >
+                          <td className="border-b border-slate-400 px-1.5 text-center text-slate-900">
+                            {product && index === 0 ? dateLabel : ""}
+                          </td>
+                          <td className="border-b border-l border-slate-400 px-2">
+                            {product ? (
+                              <div className="flex items-center gap-1">
+                                <ProductSearch
+                                  catalog={catalog}
+                                  label={`Cari nama produk baris ${index + 1}`}
+                                  onSelect={(productId) =>
+                                    selectProduct(product.key, productId)
+                                  }
+                                  selectedName={product.productName}
+                                />
+                                <button
+                                  aria-label={`Hapus produk baris ${index + 1}`}
+                                  className="no-export flex h-4 w-4 shrink-0 items-center justify-center text-slate-400 hover:text-red-600"
+                                  onClick={() =>
+                                    setProducts((current) =>
+                                      current.filter(
+                                        (line) => line.key !== product.key,
+                                      ),
+                                    )
+                                  }
+                                  type="button"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            ) : index === products.length ? (
                               <button
-                                aria-label={`Hapus produk baris ${index + 1}`}
-                                className="no-export px-1 text-red-700"
-                                onClick={() =>
-                                  setProducts((current) =>
-                                    current.filter((line) => line.key !== product.key),
-                                  )
-                                }
+                                className="no-export inline-flex items-center gap-1 border border-emerald-700 bg-white px-2.5 py-0.5 text-[11px] font-medium text-emerald-800 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                disabled={isLoading || catalog.length === 0}
+                                onClick={addProductLine}
                                 type="button"
                               >
-                                ×
+                                + Tambah produk
                               </button>
-                            </div>
-                          ) : index === products.length ? (
-                            <button
-                              className="no-export rounded border border-emerald-700 bg-emerald-50 px-2 py-0.5 text-xs font-bold text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
-                              disabled={isLoading || catalog.length === 0}
-                              onClick={addProductLine}
-                              type="button"
-                            >
-                              + Tambah produk
-                            </button>
-                          ) : null}
-                        </td>
-                        <td className="border border-slate-400 px-1">
-                          {product?.productId && selectedCatalogProduct ? (
-                            <div className="flex items-center gap-1">
+                            ) : null}
+                          </td>
+                          <td className="border-b border-l border-slate-400 px-2">
+                            {product?.productId && selectedCatalogProduct ? (
+                              <div className="flex items-center gap-1">
+                                <input
+                                  aria-label={`Jumlah produk baris ${index + 1}`}
+                                  className="w-10 shrink-0 bg-transparent text-center outline-none"
+                                  inputMode="numeric"
+                                  onChange={(event) =>
+                                    updateProductLine(product.key, {
+                                      quantity:
+                                        Number(
+                                          event.target.value.replace(/\D/g, ""),
+                                        ) || 0,
+                                    })
+                                  }
+                                  value={product.quantity || ""}
+                                />
+                                <select
+                                  aria-label={`Tier harga baris ${index + 1}`}
+                                  className="min-w-0 flex-1 appearance-none bg-transparent p-0 text-[11px] text-slate-700 outline-none"
+                                  onChange={(event) =>
+                                    selectTier(
+                                      product.key,
+                                      product.productId,
+                                      event.target.value,
+                                    )
+                                  }
+                                  value={product.tierId}
+                                >
+                                  {selectedCatalogProduct.tiers.map((tier) => (
+                                    <option key={tier.id} value={tier.id}>
+                                      {tier.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            ) : product ? (
                               <input
                                 aria-label={`Jumlah produk baris ${index + 1}`}
-                                className="w-12 shrink-0 bg-transparent text-center outline-none"
+                                className="w-full bg-transparent text-center outline-none"
                                 inputMode="numeric"
                                 onChange={(event) =>
                                   updateProductLine(product.key, {
                                     quantity:
-                                      Number(event.target.value.replace(/\D/g, "")) || 0,
+                                      Number(
+                                        event.target.value.replace(/\D/g, ""),
+                                      ) || 0,
                                   })
                                 }
                                 value={product.quantity || ""}
                               />
-                              <select
-                                aria-label={`Tier harga baris ${index + 1}`}
-                                className="min-w-0 flex-1 appearance-none bg-transparent p-0 text-[11px] outline-none"
-                                onChange={(event) =>
-                                  selectTier(
-                                    product.key,
-                                    product.productId,
-                                    event.target.value,
-                                  )
-                                }
-                                value={product.tierId}
-                              >
-                                {selectedCatalogProduct.tiers.map((tier) => (
-                                  <option key={tier.id} value={tier.id}>
-                                    {tier.label}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          ) : product ? (
-                            <input
-                              aria-label={`Jumlah produk baris ${index + 1}`}
-                              className="w-full bg-transparent text-center outline-none"
-                              inputMode="numeric"
-                              onChange={(event) =>
-                                updateProductLine(product.key, {
-                                  quantity:
-                                    Number(event.target.value.replace(/\D/g, "")) || 0,
-                                })
-                              }
-                              value={product.quantity || ""}
-                            />
-                          ) : null}
-                        </td>
-                        <td className="border border-slate-400 px-1.5 text-right tabular-nums">
-                          {product?.productId
-                            ? new Intl.NumberFormat("id-ID").format(
-                                product.quantity * product.unitPrice,
-                              )
-                            : ""}
-                        </td>
-                        <td className="border border-slate-400 px-1.5">
-                          {product?.productId ? (
-                            <input
-                              aria-label={`Sisa stok ${product.productName}`}
-                              className="w-full bg-transparent text-center tabular-nums outline-none"
-                              inputMode="numeric"
-                              onChange={(event) =>
-                                setStockValues((current) => ({
-                                  ...current,
-                                  [product.key]: event.target.value.replace(/\D/g, ""),
-                                }))
-                              }
-                              value={stockValues[product.key] ?? ""}
-                            />
-                          ) : null}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  <tr className="h-[36px] font-bold">
-                    <td className="border border-slate-400" colSpan={3} />
-                    <td className="border border-slate-400 px-1.5 text-right tabular-nums">
-                      {new Intl.NumberFormat("id-ID").format(salesTotal)}
-                    </td>
-                    <td className="border border-slate-400" />
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-
-            <div className="min-w-0">
-              <div className="flex h-[54px] flex-col items-center justify-center border border-b-0 border-slate-300 text-center font-bold leading-tight">
-                <h2 className="text-[17px]">LAPORAN REKAP</h2>
-                <p className="text-[16px]">{branchLabel || "CABANG"}</p>
-              </div>
-              <table className="w-full table-fixed border-collapse border border-slate-500">
-                <thead>
-                  <tr className="h-[34px] bg-[#dcebe5] text-center text-[12px] font-bold sm:text-[14px]">
-                    <th className="w-[24%] border border-slate-500 px-1">TANGGAL</th>
-                    <th className="w-[42%] border border-slate-500 px-1">KETERANGAN</th>
-                    <th className="w-[34%] border border-slate-500 px-1">JUMLAH UANG</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {reportRows.map((row, index) => (
-                  <tr
-                      className={`h-[34px] ${
-                        row.type === "ending" || row.isBold ? "font-bold" : ""
-                      } ${row.label === "TOTAL" ? "font-semibold" : ""}`}
-                      key={`${row.type}-${row.expense?.id ?? row.label ?? index}-${index}`}
-                    >
-                      <td className="border border-slate-600 px-1.5 text-center">
-                        {row.type !== "blank" && row.type !== "ending" && index === 0
-                          ? dateLabel
-                          : ""}
-                      </td>
-                      <td className="border border-slate-400 px-1.5">
-                        {row.type === "expense" && row.expense ? (
-                          <div className="flex items-center gap-1">
-                            <input
-                              aria-label="Keterangan pengeluaran"
-                              className="w-full min-w-0 bg-transparent outline-none"
-                              onChange={(event) =>
-                                updateExpense(row.expense!.id, {
-                                  description: event.target.value,
-                                })
-                              }
-                              placeholder="Nama pengeluaran"
-                              value={row.expense.description}
-                            />
-                            <button
-                              aria-label="Hapus pengeluaran"
-                              className="no-export text-red-700"
-                              onClick={() =>
-                                setExpenses((current) =>
-                                  current.filter((item) => item.id !== row.expense!.id),
+                            ) : null}
+                          </td>
+                          <td className="border-b border-l border-slate-400 px-2 text-right tabular-nums">
+                            {product?.productId
+                              ? new Intl.NumberFormat("id-ID").format(
+                                  product.quantity * product.unitPrice,
                                 )
-                              }
-                              type="button"
-                            >
-                              ×
-                            </button>
-                          </div>
-                        ) : row.label === "PENGELUARAN" ? (
-                          <span className="flex items-center justify-between">
-                            PENGELUARAN
-                            <button
-                              className="no-export rounded border border-emerald-700 px-1.5 text-xs font-bold text-emerald-800"
-                              onClick={addExpense}
-                              type="button"
-                            >
-                              + Tambah
-                            </button>
-                          </span>
-                        ) : (
-                          row.label
-                        )}
+                              : ""}
+                          </td>
+                          <td className="border-b border-l border-slate-400 px-2">
+                            {product?.productId ? (
+                              <input
+                                aria-label={`Sisa stok ${product.productName}`}
+                                className="w-full bg-transparent text-center tabular-nums outline-none"
+                                inputMode="numeric"
+                                onChange={(event) =>
+                                  setStockValues((current) => ({
+                                    ...current,
+                                    [product.key]: event.target.value.replace(
+                                      /\D/g,
+                                      "",
+                                    ),
+                                  }))
+                                }
+                                value={stockValues[product.key] ?? ""}
+                              />
+                            ) : null}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    <tr className="h-[34px] bg-[#dfece4] font-bold text-slate-900">
+                      <td
+                        className="border-t border-slate-500 px-3 text-right"
+                        colSpan={3}
+                      >
+                        TOTAL PENJUALAN
                       </td>
-                      <td className="border border-slate-400 px-1.5 text-right tabular-nums">
-                        {row.type === "expense" && row.expense ? (
-                          <MoneyInput
-                            label="Nominal pengeluaran"
-                            onChange={(amount) =>
-                              updateExpense(row.expense!.id, { amount })
-                            }
-                            value={row.expense.amount}
-                          />
-                        ) : row.label === "SISA UANG SEBELUMNYA" ? (
-                          <MoneyInput
-                            label="Sisa uang sebelumnya"
-                            onChange={setPreviousCash}
-                            value={previousCash}
-                          />
-                        ) : row.label === "SETOR" ? (
-                          <MoneyInput
-                            label="Setor"
-                            onChange={setDepositAmount}
-                            value={depositAmount}
-                          />
-                        ) : row.label === "BIAYA ADMIN" ? (
-                          <MoneyInput
-                            label="Biaya admin"
-                            onChange={setAdminFee}
-                            value={adminFee}
-                          />
-                        ) : row.amount !== undefined ? (
-                          new Intl.NumberFormat("id-ID").format(row.amount)
-                        ) : null}
+                      <td className="border-l border-t border-slate-500 px-2 text-right tabular-nums">
+                        {new Intl.NumberFormat("id-ID").format(salesTotal)}
                       </td>
+                      <td className="border-l border-t border-slate-500" />
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* KOLOM KANAN: LAPORAN REKAP */}
+              <div className="min-w-0 self-start border border-slate-500 bg-white">
+                <div className="border-b border-slate-500 bg-white py-2.5 text-center">
+                  <h2 className="text-[14px] font-bold tracking-wide text-slate-900">
+                    LAPORAN REKAP
+                  </h2>
+                  <p className="mt-0.5 text-[13px] font-bold tracking-wide text-slate-900">
+                    {branchLabel || "CABANG"}
+                  </p>
+                </div>
+                <table className="w-full table-fixed border-collapse">
+                  <thead>
+                    <tr className="h-[32px] bg-[#dfece4] text-center text-[11px] font-bold text-slate-900">
+                      <th className="w-[23%] border-b border-slate-500 px-1">
+                        TANGGAL
+                      </th>
+                      <th className="w-[45%] border-b border-l border-slate-500 px-1">
+                        KETERANGAN
+                      </th>
+                      <th className="w-[32%] border-b border-l border-slate-500 px-1">
+                        JUMLAH UANG
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reportRows.map((row, index) => {
+                      const isAddRow =
+                        row.type === "add_income" || row.type === "add_expense";
+                      const isEnding = row.highlight === "ending";
+                      const isDeposit = row.highlight === "deposit";
+                      const cellBorder = isEnding
+                        ? "border-t border-slate-500"
+                        : "border-b border-slate-400";
+
+                      return (
+                        <tr
+                          className={`${isEnding ? "h-[34px]" : "h-[29px]"} ${
+                            isAddRow ? "no-export" : ""
+                          } ${row.isBold ? "font-bold" : ""} ${
+                            isDeposit || isEnding ? "bg-[#dfece4]" : "bg-white"
+                          } text-slate-900`}
+                          key={`${row.type}-${row.extraIncome?.id ?? row.expense?.id ?? row.label ?? index}-${index}`}
+                        >
+                          <td
+                            className={`${cellBorder} px-1.5 text-center leading-tight`}
+                          >
+                            {row.type !== "blank" &&
+                            row.type !== "ending" &&
+                            !isAddRow &&
+                            index === 0
+                              ? dateLabel
+                              : ""}
+                          </td>
+                          <td
+                            className={`${cellBorder} border-l border-slate-400 px-2`}
+                          >
+                            {isAddRow ? (
+                              <button
+                                className="no-export inline-flex w-full items-center justify-center gap-1 border border-emerald-700 bg-white px-3 py-0.5 text-[11px] font-medium text-emerald-800 hover:bg-emerald-50"
+                                onClick={
+                                  row.type === "add_income"
+                                    ? addExtraIncome
+                                    : addExpense
+                                }
+                                title={
+                                  row.type === "add_income"
+                                    ? "Tambah baris pemasukan di atas TOTAL"
+                                    : "Tambah baris pengeluaran"
+                                }
+                                type="button"
+                              >
+                                + Tambah
+                              </button>
+                            ) : row.type === "extra_income" && row.extraIncome ? (
+                              <div className="flex items-center gap-1">
+                                <input
+                                  aria-label="Keterangan tambahan"
+                                  className="w-full min-w-0 bg-transparent outline-none placeholder:text-slate-400 print:placeholder-transparent"
+                                  onChange={(event) =>
+                                    updateExtraIncome(row.extraIncome!.id, {
+                                      description: event.target.value,
+                                    })
+                                  }
+                                  placeholder="Tulis keterangan..."
+                                  value={row.extraIncome.description}
+                                />
+                                <button
+                                  aria-label="Hapus baris tambahan"
+                                  className="no-export flex h-4 w-4 shrink-0 items-center justify-center text-slate-400 hover:text-red-600"
+                                  onClick={() =>
+                                    setAdditionalIncomes((current) =>
+                                      current.filter(
+                                        (item) =>
+                                          item.id !== row.extraIncome!.id,
+                                      ),
+                                    )
+                                  }
+                                  type="button"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            ) : row.type === "expense" && row.expense ? (
+                              <div className="flex items-center gap-1">
+                                <input
+                                  aria-label="Keterangan pengeluaran"
+                                  className="w-full min-w-0 bg-transparent outline-none placeholder:text-slate-400 print:placeholder-transparent"
+                                  onChange={(event) =>
+                                    updateExpense(row.expense!.id, {
+                                      description: event.target.value,
+                                    })
+                                  }
+                                  placeholder="Nama pengeluaran..."
+                                  value={row.expense.description}
+                                />
+                                <button
+                                  aria-label="Hapus pengeluaran"
+                                  className="no-export flex h-4 w-4 shrink-0 items-center justify-center text-slate-400 hover:text-red-600"
+                                  onClick={() =>
+                                    setExpenses((current) =>
+                                      current.filter(
+                                        (item) => item.id !== row.expense!.id,
+                                      ),
+                                    )
+                                  }
+                                  type="button"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="block truncate">{row.label}</span>
+                            )}
+                          </td>
+                          <td
+                            className={`${cellBorder} border-l border-slate-400 px-2 text-right tabular-nums`}
+                          >
+                            {isAddRow ? null : row.type === "extra_income" &&
+                              row.extraIncome ? (
+                              <MoneyInput
+                                label="Nominal tambahan"
+                                onChange={(amount) =>
+                                  updateExtraIncome(row.extraIncome!.id, {
+                                    amount,
+                                  })
+                                }
+                                value={row.extraIncome.amount}
+                              />
+                            ) : row.type === "expense" && row.expense ? (
+                              <MoneyInput
+                                label="Nominal pengeluaran"
+                                onChange={(amount) =>
+                                  updateExpense(row.expense!.id, { amount })
+                                }
+                                value={row.expense.amount}
+                              />
+                            ) : row.label === "SISA UANG SEBELUMNYA" ? (
+                              <MoneyInput
+                                label="Sisa uang sebelumnya"
+                                onChange={setPreviousCash}
+                                value={previousCash}
+                              />
+                            ) : row.label === "SETOR" ? (
+                              <MoneyInput
+                                label="Setor"
+                                onChange={setDepositAmount}
+                                value={depositAmount}
+                              />
+                            ) : row.label === "BIAYA ADMIN" ? (
+                              <MoneyInput
+                                label="Biaya admin"
+                                onChange={setAdminFee}
+                                value={adminFee}
+                              />
+                            ) : row.amount !== undefined ? (
+                              new Intl.NumberFormat("id-ID").format(row.amount)
+                            ) : null}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
         </div>
 
         {isLoading && (
-          <p className="mt-3 text-center text-sm text-slate-500">
+          <p className="no-print mt-3 text-center text-sm text-slate-500">
             Memuat transaksi dan rekap dari database...
           </p>
         )}
         {!isLoading && !loadError && products.length === 0 && (
-          <p className="mt-3 text-center text-sm text-slate-500">
+          <p className="no-print mt-3 text-center text-sm text-slate-500">
             Belum ada transaksi untuk cabang dan tanggal yang dipilih. Rekap masih
             dapat diisi dan disimpan.
           </p>
         )}
-        <p className="mt-3 text-center text-xs text-slate-500">
-          Jumlah akhir uang = sisa sebelumnya + penjualan − setor −
+        <p className="no-print mt-3 text-center text-xs text-slate-500">
+          Jumlah akhir uang = sisa sebelumnya + penjualan + tambahan − setor −
           biaya admin − pengeluaran.
         </p>
       </div>
