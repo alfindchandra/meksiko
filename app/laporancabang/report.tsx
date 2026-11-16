@@ -9,6 +9,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase";
 import { localDateKey, SaleLine } from "../lib/sales";
 
@@ -295,20 +296,166 @@ function MoneyInput({
   );
 }
 
+function useIsMobile() {
+  return useSyncExternalStore(
+    (callback) => {
+      const query = window.matchMedia("(max-width: 639px)");
+      query.addEventListener("change", callback);
+      return () => query.removeEventListener("change", callback);
+    },
+    () => window.matchMedia("(max-width: 639px)").matches,
+    () => false,
+  );
+}
+
+type SheetItem = { id: string; label: string };
+
+/** Layar pencarian penuh untuk HP: input 16px (tanpa auto-zoom iOS), target sentuh besar,
+ *  tinggi mengikuti visualViewport sehingga daftar tidak tertutup keyboard. */
+function SearchSheet({
+  title,
+  placeholder,
+  items,
+  selectedId,
+  emptyText,
+  onSelect,
+  onClose,
+}: {
+  title: string;
+  placeholder: string;
+  items: SheetItem[];
+  selectedId?: string;
+  emptyText: string;
+  onSelect: (id: string) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [viewport, setViewport] = useState<{
+    top: number;
+    height: number;
+  } | null>(null);
+
+  useEffect(() => {
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, []);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const update = () => setViewport({ top: vv.offsetTop, height: vv.height });
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, []);
+
+  const results = useMemo(() => {
+    const q = query.trim().toLocaleLowerCase("id-ID");
+    const filtered = q
+      ? items.filter((item) =>
+          item.label.toLocaleLowerCase("id-ID").includes(q),
+        )
+      : items;
+    return filtered.slice(0, 100);
+  }, [items, query]);
+
+  return createPortal(
+    <div
+      aria-label={title}
+      aria-modal="true"
+      className="no-export no-print fixed inset-x-0 top-0 z-[100] flex h-dvh flex-col bg-white"
+      role="dialog"
+      style={viewport ? { top: viewport.top, height: viewport.height } : undefined}
+    >
+      <div className="flex items-center gap-2 border-b border-slate-300 bg-white p-3">
+        <input
+          aria-label={title}
+          autoComplete="off"
+          autoFocus
+          className="h-11 min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 text-base text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-700"
+          enterKeyHint="search"
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              if (results[0]) onSelect(results[0].id);
+            }
+          }}
+          placeholder={placeholder}
+          type="search"
+          value={query}
+        />
+        <button
+          className="h-11 shrink-0 px-2 text-sm font-semibold text-emerald-800"
+          onClick={onClose}
+          type="button"
+        >
+          Batal
+        </button>
+      </div>
+      <ul
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom)]"
+        role="listbox"
+      >
+        {results.length === 0 ? (
+          <li className="px-4 py-8 text-center text-sm text-slate-500">
+            {emptyText}
+          </li>
+        ) : (
+          results.map((item) => (
+            <li
+              aria-selected={item.id === selectedId}
+              className={`flex min-h-12 cursor-pointer items-center border-b border-slate-100 px-4 py-3 text-base text-slate-900 active:bg-emerald-100 ${
+                item.id === selectedId ? "bg-emerald-50 font-semibold" : ""
+              }`}
+              key={item.id}
+              onClick={() => onSelect(item.id)}
+              role="option"
+            >
+              {item.label}
+            </li>
+          ))
+        )}
+      </ul>
+    </div>,
+    document.body,
+  );
+}
+
 function ProductSearch({
   catalog,
+  selectedId,
   selectedName,
   onSelect,
   label,
 }: {
   catalog: CatalogProduct[];
+  selectedId?: string;
   selectedName: string;
   onSelect: (productId: string) => void;
   label: string;
 }) {
+  const isMobile = useIsMobile();
   const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
   const [query, setQuery] = useState("");
   const [focused, setFocused] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [active, setActive] = useState(0);
   const [rect, setRect] = useState({ left: 0, top: 0, width: 220 });
 
@@ -326,31 +473,86 @@ function ProductSearch({
       .slice(0, 8);
   }, [catalog, trimmed]);
 
+  const sheetItems = useMemo(
+    () =>
+      catalog
+        .filter((item) => item.tiers.length > 0)
+        .map((item) => ({ id: item.id, label: item.name })),
+    [catalog],
+  );
+
   useEffect(() => {
     if (!isOpen) return;
-    const close = () => inputRef.current?.blur();
-    window.addEventListener("scroll", close, true);
-    window.addEventListener("resize", close);
+    const startWidth = window.innerWidth;
+    // Scroll di dalam daftar hasil tidak boleh menutup dropdown; perubahan tinggi
+    // (keyboard layar muncul) juga diabaikan, hanya perubahan lebar yang menutup.
+    const closeOnScroll = (event: Event) => {
+      if (event.target instanceof Node && listRef.current?.contains(event.target)) {
+        return;
+      }
+      inputRef.current?.blur();
+    };
+    const closeOnResize = () => {
+      if (window.innerWidth !== startWidth) inputRef.current?.blur();
+    };
+    window.addEventListener("scroll", closeOnScroll, true);
+    window.addEventListener("resize", closeOnResize);
     return () => {
-      window.removeEventListener("scroll", close, true);
-      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", closeOnScroll, true);
+      window.removeEventListener("resize", closeOnResize);
     };
   }, [isOpen]);
 
   function updatePosition() {
     const box = inputRef.current?.getBoundingClientRect();
     if (!box) return;
-    setRect({
-      left: box.left,
-      top: box.bottom + 2,
-      width: Math.max(box.width, 220),
-    });
+    const margin = 8;
+    const width = Math.min(Math.max(box.width, 220), window.innerWidth - margin * 2);
+    const left = Math.min(
+      Math.max(box.left, margin),
+      window.innerWidth - width - margin,
+    );
+    setRect({ left, top: box.bottom + 2, width });
   }
 
   function choose(productId: string) {
     onSelect(productId);
     setQuery("");
     inputRef.current?.blur();
+  }
+
+  if (isMobile) {
+    return (
+      <div className="min-w-0 flex-1">
+        <button
+          aria-haspopup="dialog"
+          aria-label={label}
+          className="-my-1 block w-full min-w-0 py-1 text-left font-normal"
+          onClick={() => setSheetOpen(true)}
+          type="button"
+        >
+          <span className="block truncate px-0.5">
+            {selectedName || (
+              <span className="no-export text-slate-400">Cari produk...</span>
+            )}
+          </span>
+        </button>
+        {sheetOpen && (
+          <SearchSheet
+            emptyText="Produk tidak ditemukan"
+            items={sheetItems}
+            onClose={() => setSheetOpen(false)}
+            onSelect={(productId) => {
+              onSelect(productId);
+              setSheetOpen(false);
+            }}
+            placeholder="Cari nama produk..."
+            selectedId={selectedId}
+            title="Pilih produk"
+          />
+        )}
+      </div>
+    );
   }
 
   return (
@@ -395,6 +597,7 @@ function ProductSearch({
       {isOpen && (
         <ul
           className="no-export fixed z-50 max-h-60 overflow-auto border border-slate-400 bg-white py-1 text-[13px] shadow-md"
+          ref={listRef}
           role="listbox"
           style={{ left: rect.left, top: rect.top, width: rect.width }}
         >
@@ -429,7 +632,8 @@ export default function BranchReport() {
   const [outletQuery, setOutletQuery] = useState("");
   const [outletFocused, setOutletFocused] = useState(false);
   const [outletActiveIndex, setOutletActiveIndex] = useState(0);
-  const [outletRect, setOutletRect] = useState({ left: 0, top: 0, width: 220 });
+  const isMobile = useIsMobile();
+  const [outletSheetOpen, setOutletSheetOpen] = useState(false);
   const outletInputRef = useRef<HTMLInputElement>(null);
   const reportRef = useRef<HTMLDivElement>(null);
   const [outlets, setOutlets] = useState<Outlet[]>([]);
@@ -453,15 +657,19 @@ export default function BranchReport() {
   const [isExporting, setIsExporting] = useState(false);
   const [notice, setNotice] = useState("");
 
-  function updateOutletPosition() {
-    const box = outletInputRef.current?.getBoundingClientRect();
-    if (!box) return;
-    setOutletRect({
-      left: box.left,
-      top: box.bottom + 2,
-      width: Math.max(box.width, 220),
-    });
-  }
+  const filteredOutlets = useMemo(() => {
+    const q = outletQuery.trim().toLocaleLowerCase("id-ID");
+    return q
+      ? outlets.filter((item) =>
+          item.name.toLocaleLowerCase("id-ID").includes(q),
+        )
+      : outlets;
+  }, [outlets, outletQuery]);
+  const outletItems = useMemo(
+    () => outlets.map((item) => ({ id: item.id, label: item.name })),
+    [outlets],
+  );
+  const showOutletList = outletFocused && !isMobile;
 
   useEffect(() => {
     let active = true;
@@ -933,7 +1141,8 @@ const lines: Array<{
               <input
                 aria-label="Cari cabang atau ruko"
                 autoComplete="off"
-                className="h-9 rounded border border-slate-300 bg-white px-3 text-sm font-medium text-slate-900 outline-none focus:border-emerald-700 placeholder:text-slate-400"
+                className="h-11 rounded border border-slate-300 bg-white px-3 text-base font-medium text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-700 read-only:cursor-pointer sm:h-9 sm:text-sm"
+                inputMode={isMobile ? "none" : undefined}
                 onBlur={() => {
                   setOutletFocused(false);
                   setOutletQuery("");
@@ -941,31 +1150,28 @@ const lines: Array<{
                 onChange={(event) => {
                   setOutletQuery(event.target.value);
                   setOutletActiveIndex(0);
-                  updateOutletPosition();
+                }}
+                onClick={() => {
+                  if (isMobile) setOutletSheetOpen(true);
                 }}
                 onFocus={() => {
+                  if (isMobile) return;
                   setOutletFocused(true);
                   setOutletQuery("");
-                  updateOutletPosition();
                 }}
                 onKeyDown={(event) => {
-                  const filtered = outlets.filter((item) =>
-                    item.name
-                      .toLocaleLowerCase("id-ID")
-                      .includes(outletQuery.trim().toLocaleLowerCase("id-ID")),
-                  );
                   if (event.key === "ArrowDown") {
                     event.preventDefault();
                     setOutletActiveIndex((current) =>
-                      Math.min(current + 1, filtered.length - 1),
+                      Math.min(current + 1, filteredOutlets.length - 1),
                     );
                   } else if (event.key === "ArrowUp") {
                     event.preventDefault();
                     setOutletActiveIndex((current) => Math.max(current - 1, 0));
                   } else if (event.key === "Enter") {
                     event.preventDefault();
-                    if (filtered[outletActiveIndex]) {
-                      setOutletName(filtered[outletActiveIndex].name);
+                    if (filteredOutlets[outletActiveIndex]) {
+                      setOutletName(filteredOutlets[outletActiveIndex].name);
                       setOutletQuery("");
                       outletInputRef.current?.blur();
                     }
@@ -974,60 +1180,59 @@ const lines: Array<{
                   }
                 }}
                 placeholder={outletName || "Cari cabang..."}
+                readOnly={isMobile}
                 ref={outletInputRef}
                 type="text"
-                value={outletFocused ? outletQuery : outletName}
+                value={showOutletList ? outletQuery : outletName}
               />
-              {outletFocused && (
+              {showOutletList && (
                 <ul
-                  className="no-export fixed z-50 max-h-60 overflow-auto border border-slate-400 bg-white py-1 text-[13px] shadow-md"
+                  className="no-export absolute left-0 top-full z-50 mt-1 max-h-60 w-max min-w-full max-w-[90vw] overflow-auto rounded border border-slate-300 bg-white py-1 text-sm shadow-lg"
                   role="listbox"
-                  style={{
-                    left: outletRect.left,
-                    top: outletRect.top,
-                    width: outletRect.width,
-                  }}
                 >
-                  {outlets.filter((item) =>
-                    item.name
-                      .toLocaleLowerCase("id-ID")
-                      .includes(outletQuery.trim().toLocaleLowerCase("id-ID")),
-                  ).length === 0 ? (
+                  {filteredOutlets.length === 0 ? (
                     <li className="px-3 py-2 text-slate-500">
                       Cabang tidak ditemukan
                     </li>
                   ) : (
-                    outlets
-                      .filter((item) =>
-                        item.name
-                          .toLocaleLowerCase("id-ID")
-                          .includes(
-                            outletQuery.trim().toLocaleLowerCase("id-ID"),
-                          ),
-                      )
-                      .map((item, resultIndex) => (
-                        <li
-                          aria-selected={resultIndex === outletActiveIndex}
-                          className={`cursor-pointer px-3 py-1.5 ${
-                            resultIndex === outletActiveIndex
-                              ? "bg-emerald-100 font-semibold text-emerald-900"
-                              : "hover:bg-emerald-50"
-                          }`}
-                          key={item.id}
-                          onMouseDown={(event) => {
-                            event.preventDefault();
-                            setOutletName(item.name);
-                            setOutletQuery("");
-                            outletInputRef.current?.blur();
-                          }}
-                          onMouseEnter={() => setOutletActiveIndex(resultIndex)}
-                          role="option"
-                        >
-                          {item.name}
-                        </li>
-                      ))
+                    filteredOutlets.map((item, resultIndex) => (
+                      <li
+                        aria-selected={resultIndex === outletActiveIndex}
+                        className={`cursor-pointer px-3 py-1.5 ${
+                          resultIndex === outletActiveIndex
+                            ? "bg-emerald-100 font-semibold text-emerald-900"
+                            : "hover:bg-emerald-50"
+                        }`}
+                        key={item.id}
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          setOutletName(item.name);
+                          setOutletQuery("");
+                          outletInputRef.current?.blur();
+                        }}
+                        onMouseEnter={() => setOutletActiveIndex(resultIndex)}
+                        role="option"
+                      >
+                        {item.name}
+                      </li>
+                    ))
                   )}
                 </ul>
+              )}
+              {isMobile && outletSheetOpen && (
+                <SearchSheet
+                  emptyText="Cabang tidak ditemukan"
+                  items={outletItems}
+                  onClose={() => setOutletSheetOpen(false)}
+                  onSelect={(id) => {
+                    const selected = outlets.find((item) => item.id === id);
+                    if (selected) setOutletName(selected.name);
+                    setOutletSheetOpen(false);
+                  }}
+                  placeholder="Cari cabang..."
+                  selectedId={outlets.find((item) => item.name === outletName)?.id}
+                  title="Pilih cabang"
+                />
               )}
             </div>
 
@@ -1148,6 +1353,7 @@ const lines: Array<{
                                   onSelect={(productId) =>
                                     selectProduct(product.key, productId)
                                   }
+                                  selectedId={product.productId}
                                   selectedName={product.productName}
                                 />
                                 <button
