@@ -3,6 +3,7 @@
 import { FormEvent, useMemo, useState } from "react";
 import { formatRupiah, PriceTier, Product } from "./lib/sales";
 import { Outlet } from "./lib/catalog";
+import Link from "next/link";
 
 type MasterTab = "products" | "outlets";
 type ProductDraft = Omit<Product, "id">;
@@ -278,13 +279,13 @@ export default function MasterData({
             >
               cabang <span>{outlets.length}</span>
             </button>
-            <a
-              href="http://localhost:3000/coffee-master"
+            <Link
+              href="/coffee-master"
               className="master-tab"
               style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}
             >
               Coffee Master
-            </a>
+            </Link>
           </div>
           <label className="master-search">
             <span aria-hidden="true">⌕</span>
