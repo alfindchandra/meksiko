@@ -278,6 +278,13 @@ export default function MasterData({
             >
               cabang <span>{outlets.length}</span>
             </button>
+            <a
+              href="http://localhost:3000/coffee-master"
+              className="master-tab"
+              style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}
+            >
+              Coffee Master
+            </a>
           </div>
           <label className="master-search">
             <span aria-hidden="true">⌕</span>

@@ -1727,14 +1727,6 @@ function Navigation({
         <Icon name="coffee" size={18} />
         Bahan kopi
       </Link>
-      <Link
-        aria-label="Buka data master kopi"
-        className="nav-item"
-        href="/coffee-master"
-      >
-        <Icon name="master" size={18} />
-        Master kopi
-      </Link>
     </div>
   );
 }

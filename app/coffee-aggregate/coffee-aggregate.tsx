@@ -358,12 +358,7 @@ export default function CoffeeAggregate() {
           >
             ← POS
           </Link>
-          <Link
-            className={`inline-flex h-10 shrink-0 items-center rounded-xl border border-[#C9D1CA] bg-white px-3 text-sm font-semibold text-[#1A2420] transition active:scale-95 ${focusRing}`}
-            href="/coffee-master"
-          >
-            Data master
-          </Link>
+          
         </header>
 
         {loadError && (
