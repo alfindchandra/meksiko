@@ -21,6 +21,7 @@ import { type Outlet } from "./lib/catalog";
 import { supabase } from "./lib/supabase";
 import MasterData from "./master-data";
 import Image from "next/image";
+import Link from "next/link";
 
 type View = "cashier" | "report" | "master";
 type CartLine = SaleLine & { key: string };
@@ -1711,6 +1712,14 @@ function Navigation({
         <Icon name="master" size={18} />
         Data master
       </button>
+      <Link
+        aria-label="Buka kalkulator rekap bahan baku kopi"
+        className="nav-item"
+        href="/coffee-aggregate"
+      >
+        <span aria-hidden="true">☕</span>
+        Bahan kopi
+      </Link>
     </div>
   );
 }
