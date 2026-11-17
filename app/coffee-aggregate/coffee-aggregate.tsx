@@ -358,6 +358,12 @@ export default function CoffeeAggregate() {
           >
             ← POS
           </Link>
+          <Link
+            className={`inline-flex h-10 shrink-0 items-center rounded-xl border border-[#C9D1CA] bg-white px-3 text-sm font-semibold text-[#1A2420] transition active:scale-95 ${focusRing}`}
+            href="/coffee-master"
+          >
+            Data master
+          </Link>
         </header>
 
         {loadError && (
@@ -535,14 +541,7 @@ export default function CoffeeAggregate() {
               </p>
             </div>
             <div className="flex shrink-0 gap-2 print:hidden">
-              <button
-                className={`h-10 rounded-xl border border-[#C9D1CA] bg-white px-3.5 text-sm font-semibold transition active:scale-95 disabled:opacity-40 ${focusRing}`}
-                disabled={ingredientUsage.length === 0}
-                onClick={() => window.print()}
-                type="button"
-              >
-                Cetak
-              </button>
+              
               <button
                 className={`h-10 rounded-xl bg-[#1F5C4F] px-3.5 text-sm font-semibold text-white transition active:scale-95 disabled:opacity-40 ${focusRing}`}
                 disabled={ingredientUsage.length === 0}

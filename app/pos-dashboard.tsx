@@ -75,6 +75,7 @@ type IconName =
   | "minus"
   | "trash"
   | "cart"
+  | "coffee"
   | "copy"
   | "check"
   | "clock"
@@ -288,6 +289,12 @@ function Icon({
       <>
         <rect {...common} x="3" y="6" width="18" height="14" rx="2" />
         <path {...common} d="M7 6V4h10v2M7 11h10M7 15h2m3 0h2m3 0h.01" />
+      </>
+    ),
+    coffee: (
+      <>
+        <path {...common} d="M3 8h18v6a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V8Z" />
+        <path {...common} d="M6 8V5a3 3 0 0 1 3-3h6a3 3 0 0 1 3 3v3" />
       </>
     ),
     report: (
@@ -1717,8 +1724,16 @@ function Navigation({
         className="nav-item"
         href="/coffee-aggregate"
       >
-        <span aria-hidden="true">☕</span>
+        <Icon name="coffee" size={18} />
         Bahan kopi
+      </Link>
+      <Link
+        aria-label="Buka data master kopi"
+        className="nav-item"
+        href="/coffee-master"
+      >
+        <Icon name="master" size={18} />
+        Master kopi
       </Link>
     </div>
   );
