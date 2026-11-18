@@ -11,6 +11,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase";
+import Link from "next/link";
 import { localDateKey, SaleLine } from "../lib/sales";
 
 type Outlet = { id: string; name: string };
@@ -639,8 +640,15 @@ export default function BranchReport() {
   const [outlets, setOutlets] = useState<Outlet[]>([]);
   const [catalog, setCatalog] = useState<CatalogProduct[]>([]);
   const [outletName, setOutletName] = useState("");
-  const currentDate = useCurrentDate();
+const currentDate = useCurrentDate();
   const [selectedDate, setSelectedDate] = useState("");
+
+  useEffect(() => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    setSelectedDate(localDateKey(yesterday));
+  }, []);
+
   const reportDate = selectedDate || currentDate;
   const [products, setProducts] = useState<ReportProduct[]>([]);
   const [previousCash, setPreviousCash] = useState(0);
@@ -1123,16 +1131,34 @@ const lines: Array<{
 
       <div className="mx-auto max-w-[1400px] print:max-w-none">
         <header className="no-print mb-6 flex flex-col gap-4 rounded-xl border border-slate-300 bg-white p-4 shadow-sm lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wider text-emerald-800">
-              Meksiko Store
-            </p>
-            <h1 className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl">
-              Laporan Cabang
-            </h1>
-            <p className="mt-0.5 text-xs text-slate-500">
-              Laporan penjualan produk, stok akhir, dan rekap kas harian (Format A4).
-            </p>
+          <div className="flex items-center gap-3">
+            <Link
+              aria-label="Kembali ke POS"
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-300 bg-slate-50 text-slate-700 transition hover:border-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+              href="/"
+              title="Kembali ke POS"
+            >
+              <svg
+                className="h-5 w-5"
+                fill="none"
+                stroke="currentColor"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2.2"
+                viewBox="0 0 24 24"
+              >
+                <path d="M19 12H5" />
+                <path d="m12 19-7-7 7-7" />
+              </svg>
+            </Link>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider text-emerald-800">
+                Meksiko Store
+              </p>
+              <h1 className="mt-0.5 text-xl font-bold text-slate-900 sm:text-2xl">
+                Laporan Cabang
+              </h1>
+            </div>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-[minmax(190px,1fr)_165px_auto_auto_auto] sm:items-end">
@@ -1246,23 +1272,7 @@ const lines: Array<{
               />
             </label>
 
-            <button
-              className="h-9 rounded border border-emerald-700 bg-white px-4 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={isSaving || !outletName}
-              onClick={saveReport}
-              type="button"
-            >
-              {isSaving ? "Menyimpan..." : "Simpan Rekap"}
-            </button>
-
-            <button
-              className="h-9 rounded border border-slate-400 bg-white px-4 text-sm font-semibold text-slate-800 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={!outletName}
-              onClick={() => window.print()}
-              type="button"
-            >
-              Cetak A4
-            </button>
+            
 
             <button
               className="h-9 rounded bg-emerald-800 px-4 text-sm font-semibold text-white hover:bg-emerald-900 disabled:cursor-not-allowed disabled:opacity-60"

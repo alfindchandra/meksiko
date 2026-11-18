@@ -244,13 +244,23 @@ export default function MasterData({
               Kelola barang, tier harga, dan daftar cabang untuk transaksi POS.
             </p>
           </div>
-          <span className="master-storage-badge">
-            {productLoadError || outletLoadError
-              ? "Database sebagian tersedia"
-              : ready
-                ? "Terhubung ke database"
-                : "Memuat database..."}
-          </span>
+          <Link href="/laporancabang" className="btn-laporan-cabang">
+            <span>Masuk ke laporan cabang</span>
+            <svg 
+              width="15" 
+              height="15" 
+              viewBox="0 0 24 24" 
+              fill="none" 
+              stroke="currentColor" 
+              strokeWidth="2.5" 
+              strokeLinecap="round" 
+              strokeLinejoin="round"
+            >
+              <path d="M5 12h14" />
+              <path d="m12 5 7 7-7 7" />
+            </svg>
+          </Link>
+          
         </div>
 
         <div className="master-toolbar panel">
